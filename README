@@ -1,0 +1,3 @@
+A single-threaded implementation of Zed Shaw's superpoll idea
+(http://sheddingbikes.com/posts/1280829388.html).  Works by adding the
+epoll fd to the set of fds passed to poll().
