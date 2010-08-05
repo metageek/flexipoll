@@ -1,6 +1,8 @@
 #ifndef _FLEXIPOLL_H_
 #define _FLEXIPOLL_H_
 
+#include <poll.h>
+
 /* Opaque handle to a set of fds to poll. */
 typedef struct Flexipoll* Flexipoll;
 
@@ -25,7 +27,10 @@ int flexipoll_add_fd(Flexipoll fp, int fd, short events);
  */
 int flexipoll_remove_fd(Flexipoll fp, int fd);
 
-/* Block for fds with events to report. */
+/* Block for fds with events to report.  Returns N, number of fds with
+ *  events; fills out fds_with_events[0..N] with the fds in question.
+ *  Find the events with flexipoll_events(), below.
+ */
 int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds);
 
 /* Get the events bitmap for this fd as of the last call to

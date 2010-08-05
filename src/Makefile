@@ -8,7 +8,7 @@ clean::
 	$(RM) *.o *.a *~
 
 INCDIR := ../include
-CFLAGS += -I$(INCDIR)
+CFLAGS += -I$(INCDIR) -g
 
 OBJS := flexipoll.o
 

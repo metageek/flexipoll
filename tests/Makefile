@@ -6,7 +6,7 @@ clean::
 	$(RM) *.o *.a *~
 
 INCDIR := ../include
-CFLAGS += -I$(INCDIR)
+CFLAGS += -I$(INCDIR) -g
 LIBS := ../src/libflexipoll.a
 
 OBJS := tst.o
@@ -15,4 +15,4 @@ tst.o: $(INCDIR)/flexipoll.h
 test:: tst
 
 tst: $(OBJS) $(LIBS)
-	$(CC)  $(LIBS) $(OBJS) -o $@
+	$(CC) $(OBJS) $(LIBS) -o $@

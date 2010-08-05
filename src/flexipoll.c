@@ -246,7 +246,7 @@ int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
     int i=1;
     FlexipollEntry* entry=fp->poll.entries;
     while (entry) {
-      fp->pollfds[i].fd=fp->epoll_fd;
+      fp->pollfds[i].fd=entry->fd;
       fp->pollfds[i].events=entry->events;
       fp->pollfds[i].revents=0;
 
@@ -365,7 +365,7 @@ int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
     }
   }
 
-  return 0;
+  return fds_index;
 }
 
 int flexipoll_events(Flexipoll fp, int fd)
