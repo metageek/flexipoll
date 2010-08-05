@@ -26,10 +26,13 @@ int flexipoll_add_fd(Flexipoll fp, int fd, short events);
 int flexipoll_remove_fd(Flexipoll fp, int fd);
 
 /* Block for fds with events to report. */
-int flexipoll_poll(Flexipoll fp);
+int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds);
 
 /* Get the events bitmap for this fd as of the last call to
- *  flexipoll_poll().  Returns <0 on error.
+ *  flexipoll_poll().  Returns <0 on error.  Not valid if
+ *  fd was not in fds_with_events from the last flexipoll_poll();
+ *  in that case, the bitmap returned might, or might not, be
+ *  from a previous call.
  */
 int flexipoll_events(Flexipoll fp, int fd);
 

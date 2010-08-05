@@ -201,7 +201,7 @@ int flexipoll_remove_fd(Flexipoll fp, int fd)
   entry->fd=0;
 }
 
-int flexipoll_poll(Flexipoll fp)
+int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
 {
   if (!fp) {
     errno=EFAULT;
@@ -232,11 +232,17 @@ int flexipoll_poll(Flexipoll fp)
     return -1;
   }
 
+  int fds_index=0;
+
   {
     int i=1;
     FlexipollEntry* entry=fp->poll.entries;
     while (entry) {
       entry->revents=fp->pollfds[i].revents;
+
+      if ((entry->revents) && (fds_index<max_fds)) {
+        fds_with_events[fds_index++]=entry->fd;
+      }
 
       entry=entry->next_in_chain;
       i+=1;
@@ -253,9 +259,13 @@ int flexipoll_poll(Flexipoll fp)
     }
 
     int i;
-    for (i=0; i<num_events; i++) {
+    for (i=0; (i<num_events) && (fds_index<max_fds); i++) {
       FlexipollEntry* entry=(FlexipollEntry*)(fp->epvs[i].data.ptr);
       entry->revents=fp->epvs[i].events;
+
+      if (entry->revents) {
+        fds_with_events[fds_index++]=entry->fd;
+      }
     }
   }
 
