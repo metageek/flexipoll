@@ -20,7 +20,8 @@ int flexipoll_add_fd(Flexipoll fp, int fd, short events);
 
 /* Unregister a file descriptor.
  *
- * Returns 0 on success, or <0 on error.
+ * Returns 0 on success, or <0 on error.  It is not an error to unregister
+ *  a file descriptor which is not currently registered.
  */
 int flexipoll_remove_fd(Flexipoll fp, int fd);
 
