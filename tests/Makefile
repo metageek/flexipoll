@@ -9,10 +9,12 @@ INCDIR := ../include
 CFLAGS += -I$(INCDIR) -g
 LIBS := ../src/libflexipoll.a
 
-OBJS := tst.o
-tst.o: $(INCDIR)/flexipoll.h
+tst.o pipetest.o: $(INCDIR)/flexipoll.h
 
-test:: tst
+test:: tst pipetest
 
-tst: $(OBJS) $(LIBS)
-	$(CC) $(OBJS) $(LIBS) -o $@
+tst: tst.o $(LIBS)
+	$(CC) tst.o $(LIBS) -o $@
+
+pipetest: pipetest.o $(LIBS)
+	$(CC) pipetest.o $(LIBS) -o $@

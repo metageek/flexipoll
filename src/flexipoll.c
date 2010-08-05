@@ -5,6 +5,7 @@
 
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
 
 static const short all_events=(POLLIN
@@ -255,11 +256,19 @@ int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
     }
   }
 
-  if (poll(fp->pollfds,fp->poll.count+1,-1)<0) {
-    int tmp=errno;
-    perror("poll");
-    errno=tmp;
-    return -1;
+  {
+    int N=poll(fp->pollfds,fp->poll.count+1,-1);
+    if (N<0) {
+      int tmp=errno;
+      perror("poll");
+      errno=tmp;
+      return -1;
+    }
+    if (N==0) {
+      fprintf(stderr,"poll() returned 0\n");
+      errno=0;
+      return 0;
+    }
   }
 
   int fds_index=0;

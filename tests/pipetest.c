@@ -3,6 +3,8 @@
  *	Copyright 2002, 2006 Red Hat, Inc.
  *	Portions Copyright 2001 Davide Libenzi <davidel@xmailserver.org>.
  *	<include GPL>
+ *
+ *      Flexipoll supported added 2010 John Stracke <francis@thibault.org>
  */
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,6 +21,7 @@
 #include <sys/time.h>
 #include <sys/mman.h>
 #include <sys/epoll.h>
+#include <flexipoll.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -36,12 +39,14 @@
 enum {
 	MODE_POLL,
 	MODE_SYS_EPOLL,
-	MODE_KEVENT_POLL,
+	MODE_FLEXIPOLL,
+        MODE_KEVENT_POLL
 } mode = MODE_POLL;
 
 const char *modes[] = {
 	"poll",
 	"sys-epoll",
+        "flexipoll",
 };
 
 int gnuplot = 0;
@@ -90,6 +95,8 @@ struct fdinfo {
 
 struct pollfd	pollfds[MAX_FDS];
 int nr_pollfds;
+
+Flexipoll fp;
 
 struct iocb *pending_iocbs[MAX_FDS*3];
 int nr_pending_iocbs;
@@ -240,6 +247,12 @@ void makeapipe(int idx)
 			pexit("epoll_ctl");
 	}
 
+	if (mode == MODE_FLEXIPOLL) {
+          if (flexipoll_add_fd(fp,fds[READ],POLLIN)<0) {
+            pexit("flexipoll_add_fd");
+          }
+	}
+
 	inf = &fdinfo[fds[WRITE]];
 	assert(inf->active == 0);
 	inf->active = 1;
@@ -278,6 +291,34 @@ void poll_main_loop(void)
 			}
 		}		
 	}
+}
+
+void flexipoll_main_loop(void)
+{
+  int fds_with_events[1024];
+  const int max_fds=sizeof(fds_with_events)/sizeof(fds_with_events[0]);
+
+  int res;
+  int pass=1;
+  while (!done) {
+    dprintf("flexipoll_main_loop: flexipoll_poll()\n");
+    send_pending_tokes();
+    res = flexipoll_poll(fp,fds_with_events,max_fds);
+    if (res <= 0) {
+      fprintf(stderr,"Failure on pass %d\n",pass);
+      pexit("flexipoll_poll");
+    }
+
+    dprintf("got %d\n", res);
+
+    int i;
+    for (i=0; i<res; i++) {
+      int fd=fds_with_events[i];
+      if (flexipoll_events(fp,fd) & POLLIN)
+        read_and_process_token(fd);
+    }
+    pass++;
+  }
 }
 
 void sys_epoll_setup(void)
@@ -323,6 +364,8 @@ void seedthreads(int nr)
 
 int main(int argc, char *argv[])
 {
+  fp=flexipoll_new();
+
 	struct timeval stv, etv;
 	int nr;
 	long long usecs, passes_per_sec;
@@ -332,6 +375,8 @@ int main(int argc, char *argv[])
 			mode = MODE_POLL;
 		} else if (0 == strcmp(argv[1], "--sys-epoll")) {
 			mode = MODE_SYS_EPOLL;
+		} else if (0 == strcmp(argv[1], "--flexipoll")) {
+			mode = MODE_FLEXIPOLL;
 		} else if (0 == strcmp(argv[1], "--bufsize")) {
 			argv++,argc--;
 			BUFSIZE = atoi(argv[1]);
@@ -344,7 +389,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (argc != 4) {
-		fprintf(stderr, "usage: pipetest [--poll | --sys-epoll]\n"
+		fprintf(stderr, "usage: pipetest [--poll | --sys-epoll | --flexipoll]\n"
             "\t[--bufsize] <num pipes> <message threads> <max generation>\n");
 		return 2;
 	}
@@ -395,6 +440,9 @@ int main(int argc, char *argv[])
 
 	if (mode == MODE_SYS_EPOLL)
 		sys_epoll_main_loop();
+
+	if (mode == MODE_FLEXIPOLL)
+		flexipoll_main_loop();
 
 	gettimeofday(&etv, NULL);
 
