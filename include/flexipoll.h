@@ -29,7 +29,7 @@ int flexipoll_remove_fd(Flexipoll fp, int fd);
 int flexipoll_poll(Flexipoll fp);
 
 /* Get the events bitmap for this fd as of the last call to
- *  flexipoll_poll().
+ *  flexipoll_poll().  Returns <0 on error.
  */
 int flexipoll_events(Flexipoll fp, int fd);
 

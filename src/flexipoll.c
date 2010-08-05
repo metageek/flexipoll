@@ -186,3 +186,26 @@ int flexipoll_remove_fd(Flexipoll fp, int fd)
 
   entry->fd=0;
 }
+
+int flexipoll_events(Flexipoll fp, int fd)
+{
+  if (!fp) {
+    errno=EFAULT;
+    return -1;
+  }
+
+  if ((fd<0)
+      || (fd>=fp->num_fds)
+      ) {
+    errno=EINVAL;
+    return -1;
+  }
+
+  FlexipollEntry* entry=fp->fd_to_entry+fd;
+  if (entry->fd<0) {
+    errno=EINVAL;
+    return -1;
+  }
+
+  return entry->revents;
+}
