@@ -16,11 +16,15 @@ static const short all_events=(POLLIN
                                |POLLERR
                                |POLLHUP);
 
+static const float atr_threshold=0.6,
+  atr_threshold_below=0.58,
+  atr_threshold_above=0.62;
+
 typedef struct FlexipollEntry {
   int fd;
   short events,revents;
 
-  int active,total,in_epoll;
+  int active,total,in_epoll_bool;
 
   struct FlexipollEntry *next_overall, *next_in_chain,
     *prev_overall, *prev_in_chain;
@@ -36,6 +40,10 @@ struct Flexipoll {
                            */
 
   struct epoll_event* epvs; /* preallocated array of length num_fds */
+  int* dirty_fds; /* preallocated array of length num_fds; elements are
+                   *  fds that should be moved from poll to epoll, or
+                   *  vice versa.
+                   */
 
   struct {
     FlexipollEntry *entries;
@@ -82,9 +90,22 @@ Flexipoll flexipoll_new(void)
     return 0;
   }
 
+  res->dirty_fds=(int*)(malloc(sizeof(int)
+                               *(res->num_fds)));
+  if (!res->dirty_fds) {
+    int tmp=errno;
+    free(res->epvs);
+    free(res->pollfds);
+    free(res->fd_to_entry);
+    free(res);
+    errno=tmp;
+    return 0;
+  }
+
   res->epoll_fd=epoll_create1(EPOLL_CLOEXEC);
   if ((res->epoll_fd)<0) {
     int tmp=errno;
+    free(res->dirty_fds);
     free(res->epvs);
     free(res->pollfds);
     free(res->fd_to_entry);
@@ -110,6 +131,8 @@ void flexipoll_delete(Flexipoll fp)
   if (!fp)
     return;
 
+  if (fp->dirty_fds)
+    free(fp->dirty_fds);
   if (fp->epvs)
     free(fp->epvs);
   if (fp->pollfds)
@@ -142,7 +165,7 @@ int flexipoll_add_fd(Flexipoll fp, int fd, short events)
   if (entry->fd<0) {
     entry->fd=fd;
     entry->active=entry->total=0;
-    entry->in_epoll=0;
+    entry->in_epoll_bool=0;
     entry->revents=0;
 
     entry->next_overall=fp->all.entries;
@@ -155,7 +178,7 @@ int flexipoll_add_fd(Flexipoll fp, int fd, short events)
     fp->poll.entries=entry;
     fp->poll.count++;
   } else {
-    if (entry->in_epoll) {
+    if (entry->in_epoll_bool) {
       struct epoll_event epv;
       epv.events=events;
       epv.data.ptr=entry;
@@ -189,7 +212,7 @@ int flexipoll_remove_fd(Flexipoll fp, int fd)
   if (entry->fd<0)
     return 0;
 
-  if (entry->in_epoll) {
+  if (entry->in_epoll_bool) {
     if (epoll_ctl(fp->epoll_fd,EPOLL_CTL_DEL,fd,0)<0) {
       int tmp=errno;
       perror("epoll_ctl");
@@ -212,6 +235,8 @@ int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
     errno=EINVAL;
     return -1;
   }
+
+  int num_dirty_fds=0;
 
   fp->pollfds[0].fd=fp->epoll_fd;
   fp->pollfds[0].events=POLLIN;
@@ -244,10 +269,16 @@ int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
     FlexipollEntry* entry=fp->poll.entries;
     while (entry) {
       entry->revents=fp->pollfds[i].revents;
+      entry->total++;
 
       if ((entry->revents) && (fds_index<max_fds)) {
         fds_with_events[fds_index++]=entry->fd;
+        entry->active++;
       }
+
+      float atr=((float)(entry->active))/(entry->total);
+      if (atr<atr_threshold_below)
+        fp->dirty_fds[num_dirty_fds++]=entry->fd;
 
       entry=entry->next_in_chain;
       i+=1;
@@ -268,8 +299,68 @@ int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
       FlexipollEntry* entry=(FlexipollEntry*)(fp->epvs[i].data.ptr);
       entry->revents=fp->epvs[i].events;
 
+      entry->total++;
+
       if (entry->revents) {
         fds_with_events[fds_index++]=entry->fd;
+        entry->active++;
+      }
+
+      float atr=((float)(entry->active))/(entry->total);
+      if (atr>atr_threshold_above)
+        fp->dirty_fds[num_dirty_fds++]=entry->fd;
+    }
+  }
+
+  {
+    int i;
+    for (i=0; i<num_dirty_fds; i++) {
+      int fd=fp->dirty_fds[i];
+      FlexipollEntry* entry=fp->fd_to_entry+fd;
+      if (entry->in_epoll_bool) {
+        if (epoll_ctl(fp->epoll_fd,EPOLL_CTL_DEL,fd,0)<0) {
+          int tmp=errno;
+          perror("can't transition fd from epoll to poll: epoll_ctl");
+          errno=tmp;
+          continue;
+        }
+
+        if (entry->prev_in_chain) {
+          entry->prev_in_chain->next_in_chain=entry->next_in_chain;
+        } else {
+          fp->epoll.entries=entry->next_in_chain;
+        }
+        entry->prev_in_chain=0;
+        entry->next_in_chain=fp->poll.entries;
+        fp->poll.entries=entry;
+
+        fp->epoll.count--;
+        fp->poll.count++;
+        entry->in_epoll_bool=0;
+      } else {
+        struct epoll_event epv;
+        epv.events=entry->events;
+        epv.data.ptr=entry;
+
+        if (epoll_ctl(fp->epoll_fd,EPOLL_CTL_ADD,fd,&epv)<0) {
+          int tmp=errno;
+          perror("can't transition fd from poll to epoll: epoll_ctl");
+          errno=tmp;
+          continue;
+        }
+
+        if (entry->prev_in_chain) {
+          entry->prev_in_chain->next_in_chain=entry->next_in_chain;
+        } else {
+          fp->poll.entries=entry->next_in_chain;
+        }
+        entry->prev_in_chain=0;
+        entry->next_in_chain=fp->epoll.entries;
+        fp->epoll.entries=entry;
+
+        fp->poll.count--;
+        fp->epoll.count++;
+        entry->in_epoll_bool=1;
       }
     }
   }
