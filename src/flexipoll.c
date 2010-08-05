@@ -22,8 +22,6 @@ typedef struct FlexipollEntry {
 
   int active,total,in_epoll;
 
-  struct epoll_event epv;
-  
   struct FlexipollEntry *next_overall, *next_in_chain,
     *prev_overall, *prev_in_chain;
 } FlexipollEntry;
@@ -36,6 +34,8 @@ struct Flexipoll {
                            *  preallocated so we don't have to malloc()
                            *  it on each call to poll().
                            */
+
+  struct epoll_event* epvs; /* preallocated array of length num_fds */
 
   struct {
     FlexipollEntry *entries;
@@ -71,8 +71,9 @@ Flexipoll flexipoll_new(void)
     return 0;
   }
 
-  res->epoll_fd=epoll_create1(EPOLL_CLOEXEC);
-  if ((res->epoll_fd)<0) {
+  res->epvs=(struct epoll_event*)(malloc(sizeof(struct epoll_event)
+                                         *(res->num_fds)));
+  if (!res->pollfds) {
     int tmp=errno;
     free(res->pollfds);
     free(res->fd_to_entry);
@@ -81,6 +82,16 @@ Flexipoll flexipoll_new(void)
     return 0;
   }
 
+  res->epoll_fd=epoll_create1(EPOLL_CLOEXEC);
+  if ((res->epoll_fd)<0) {
+    int tmp=errno;
+    free(res->epvs);
+    free(res->pollfds);
+    free(res->fd_to_entry);
+    free(res);
+    errno=tmp;
+    return 0;
+  }
 
   {
     int i;
@@ -99,6 +110,8 @@ void flexipoll_delete(Flexipoll fp)
   if (!fp)
     return;
 
+  if (fp->epvs)
+    free(fp->epvs);
   if (fp->pollfds)
     free(fp->pollfds);
   if (fp->fd_to_entry)
@@ -115,10 +128,12 @@ int flexipoll_add_fd(Flexipoll fp, int fd, short events)
     return -1;
   }
 
-  if ((fd<0)
-      || (fd>=fp->num_fds)
-      || (events & (~all_events))
-      ) {
+  if ((fd<0) || (fd>=fp->num_fds)) {
+    errno=EBADF;
+    return -1;
+  }
+
+  if (events & (~all_events)) {
     errno=EINVAL;
     return -1;
   }
@@ -141,11 +156,12 @@ int flexipoll_add_fd(Flexipoll fp, int fd, short events)
     fp->poll.count++;
   } else {
     if (entry->in_epoll) {
-      short old_events=entry->epv.events;
-      entry->epv.events=events;
-      if (epoll_ctl(fp->epoll_fd,EPOLL_CTL_MOD,fd,&(entry->epv))<0) {
+      struct epoll_event epv;
+      epv.events=events;
+      epv.data.ptr=entry;
+
+      if (epoll_ctl(fp->epoll_fd,EPOLL_CTL_MOD,fd,&epv)<0) {
         int tmp=errno;
-        entry->epv.events=old_events;
         perror("epoll_ctl");
         errno=tmp;
         return -1;
@@ -164,10 +180,8 @@ int flexipoll_remove_fd(Flexipoll fp, int fd)
     return -1;
   }
 
-  if ((fd<0)
-      || (fd>=fp->num_fds)
-      ) {
-    errno=EINVAL;
+  if ((fd<0) || (fd>=fp->num_fds)) {
+    errno=EBADF;
     return -1;
   }
 
@@ -187,6 +201,67 @@ int flexipoll_remove_fd(Flexipoll fp, int fd)
   entry->fd=0;
 }
 
+int flexipoll_poll(Flexipoll fp)
+{
+  if (!fp) {
+    errno=EFAULT;
+    return -1;
+  }
+
+  fp->pollfds[0].fd=fp->epoll_fd;
+  fp->pollfds[0].events=POLLIN;
+  fp->pollfds[0].revents=0;
+
+  {
+    int i=1;
+    FlexipollEntry* entry=fp->poll.entries;
+    while (entry) {
+      fp->pollfds[i].fd=fp->epoll_fd;
+      fp->pollfds[i].events=entry->events;
+      fp->pollfds[i].revents=0;
+
+      entry=entry->next_in_chain;
+      i+=1;
+    }
+  }
+
+  if (poll(fp->pollfds,fp->poll.count+1,-1)<0) {
+    int tmp=errno;
+    perror("poll");
+    errno=tmp;
+    return -1;
+  }
+
+  {
+    int i=1;
+    FlexipollEntry* entry=fp->poll.entries;
+    while (entry) {
+      entry->revents=fp->pollfds[i].revents;
+
+      entry=entry->next_in_chain;
+      i+=1;
+    }
+  }
+
+  if (fp->pollfds[0].revents & POLLIN) {
+    int num_events=epoll_wait(fp->epoll_fd,fp->epvs,fp->num_fds,0);
+    if (num_events<0) {
+      int tmp=errno;
+      perror("epoll");
+      errno=tmp;
+      return -1;
+    }
+
+    int i;
+    for (i=0; i<num_events; i++) {
+      FlexipollEntry* entry=(FlexipollEntry*)(fp->epvs[i].data.ptr);
+      entry->revents=fp->epvs[i].events;
+    }
+  }
+
+  return 0;
+}
+
 int flexipoll_events(Flexipoll fp, int fd)
 {
   if (!fp) {
@@ -194,10 +269,8 @@ int flexipoll_events(Flexipoll fp, int fd)
     return -1;
   }
 
-  if ((fd<0)
-      || (fd>=fp->num_fds)
-      ) {
-    errno=EINVAL;
+  if ((fd<0) || (fd>=fp->num_fds)) {
+    errno=EBADF;
     return -1;
   }
 
