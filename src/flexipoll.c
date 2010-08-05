@@ -203,8 +203,13 @@ int flexipoll_remove_fd(Flexipoll fp, int fd)
 
 int flexipoll_poll(Flexipoll fp, int* fds_with_events, int max_fds)
 {
-  if (!fp) {
+  if (!(fp && fds_with_events)) {
     errno=EFAULT;
+    return -1;
+  }
+
+  if (max_fds<=0) {
+    errno=EINVAL;
     return -1;
   }
 
